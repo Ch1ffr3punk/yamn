@@ -172,7 +172,6 @@ func lenCheck(got, expected int) (err error) {
 			expected,
 			got,
 		)
-		Info.Println(err)
 	}
 	return
 }
@@ -185,7 +184,6 @@ func bufLenCheck(buflen, length int) (err error) {
 			length,
 			buflen,
 		)
-		Info.Println(err)
 	}
 	return
 }

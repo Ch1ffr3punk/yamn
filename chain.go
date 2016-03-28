@@ -5,6 +5,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"github.com/Sirupsen/logrus"
 	"github.com/crooks/yamn/keymgr"
 	"os"
 )
@@ -28,23 +29,21 @@ func makeChain(inChain []string) (outChain []string, err error) {
 		// Try and import the modified stats file
 		err = Pubring.ImportStats()
 		if err != nil {
-			Warn.Printf("Unable to read stats: %s", err)
+			log.Warnf("Unable to read stats: %s", err)
 			return
 		}
-		Info.Println("Stats updated and reimported")
+		log.Info("Stats updated and reimported")
 	}
 	// Check generated timestamp from stats file
 	if Pubring.HaveStats() && Pubring.StatsStale(cfg.Stats.StaleHrs) {
-		Warn.Printf(
-			"Stale stats.  Generated age exceeds "+
-				"configured threshold of %d hours",
-			cfg.Stats.StaleHrs,
-		)
+		log.WithFields(logrus.Fields{
+			"cfg.Stats.StaleHrs": cfg.Stats.StaleHrs,
+		}).Warn("Stale stats.  Generated age exceeds configured threshold hours")
 	}
 	// If the chain contains a random remailer, we're going to need stats
 	if !Pubring.HaveStats() && IsMemberStr("*", inChain) {
 		err = errors.New("Cannot use random remailers without stats")
-		Warn.Println(err)
+		log.Warn(err)
 		return
 	}
 	dist := cfg.Stats.Distance
@@ -90,14 +89,14 @@ func makeChain(inChain []string) (outChain []string, err error) {
 				// Apply distance criteria
 				candidates = distanceCriteria(candidates, distance)
 				if len(candidates) == 0 {
-					Warn.Println("Insufficient remailers to comply with distance criteria")
+					log.Warn("Insufficient remailers to comply with distance criteria")
 				}
 			} else {
-				Warn.Println("No candidate remailers match selection criteria")
+				log.Warn("No candidate remailers match selection criteria")
 			}
 
 			if len(candidates) == 0 && flag_remailer {
-				Warn.Println("Relaxing latency and uptime criteria to build chain")
+				log.Warn("Relaxing latency and uptime criteria to build chain")
 				if len(outChain) == 0 {
 					// Construct a list of suitable exit remailers
 					candidates = Pubring.Candidates(0, 480, 0, true)
@@ -117,11 +116,9 @@ func makeChain(inChain []string) (outChain []string, err error) {
 				return
 			} else if len(candidates) == 1 {
 				hop = candidates[0]
-				Warn.Printf(
-					"Only one remailer (%s) meets chain "+
-						"criteria",
-					hop,
-				)
+				log.WithFields(logrus.Fields{
+					"remailer": hop,
+				}).Warn("Only one remailer meets chain criteria")
 			} else {
 				hop = candidates[randomInt(len(candidates))]
 			}

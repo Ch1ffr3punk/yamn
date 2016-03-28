@@ -5,6 +5,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"github.com/Sirupsen/logrus"
 	"github.com/crooks/yamn/keymgr"
 	"io/ioutil"
 	"math"
@@ -98,7 +99,9 @@ func mixprep() {
 	}
 	err = Pubring.ImportPubring()
 	if err != nil {
-		Warn.Printf("Pubring import failed: %s", cfg.Files.Pubring)
+		log.WithFields(logrus.Fields{
+			"Pubring": cfg.Files.Pubring,
+		}).Warn("Pubring import failed.")
 		return
 	}
 	// Read the chain from flag or config
@@ -149,14 +152,13 @@ func mixprep() {
 			var chain []string
 			chain, err = makeChain(in_chain)
 			if err != nil {
-				Error.Println(err)
-				os.Exit(0)
+				log.Fatal(err)
 			}
 			if len(chain) != len(in_chain) {
 				err = fmt.Errorf(
 					"Chain length mismatch.  In=%d, Out=%d",
 					len(in_chain), len(chain))
-				panic(err)
+				log.Panic(err)
 			}
 			//fmt.Println(chain)
 			if !got_exit {
@@ -213,21 +215,18 @@ func encodeMsg(
 	// Get KeyID and NaCl PK for the remailer we're enrypting to.
 	remailer, err := Pubring.Get(hop)
 	if err != nil {
-		Error.Printf(
-			"%s: Remailer unknown in public keyring\n",
-			hop,
-		)
-		os.Exit(1)
+		log.WithFields(logrus.Fields{
+			"Remailer": hop,
+		}).Fatal("Remailer unknown in public keyring\n")
 	}
 	// Create a new Header.
 	header := newEncodeHeader()
 	// Tell the header function what KeyID and PK to NaCl encrypt with.
 	header.setRecipient(remailer.Keyid, remailer.PK)
-	Trace.Printf(
-		"Encrypting Final Hop: Hop=%s, KeyID=%x",
-		hop,
-		remailer.Keyid,
-	)
+	log.WithFields(logrus.Fields{
+		"hop":   hop,
+		"keyID": remailer.KeyidStr,
+	}).Debug("Encrypting Final Hop")
 	// Only the body needs to be encrypted during Exit encoding.  At all other
 	// hops, the entire header stack will also need encrypting.
 	m.encryptBody(slotData.aesKey, final.aesIV)
@@ -269,18 +268,15 @@ func encodeMsg(
 		header = newEncodeHeader()
 		remailer, err := Pubring.Get(hop)
 		if err != nil {
-			Error.Printf(
-				"%s: Remailer unknown in public keyring\n",
-				hop,
-			)
-			os.Exit(1)
+			log.WithFields(logrus.Fields{
+				"Remailer:": hop,
+			}).Fatal("Remailer unknown in public keyring.")
 		}
 		header.setRecipient(remailer.Keyid, remailer.PK)
-		Trace.Printf(
-			"Encrypting: Hop=%s, KeyID=%x",
-			hop,
-			remailer.Keyid,
-		)
+		log.WithFields(logrus.Fields{
+			"hop":   hop,
+			"keyID": remailer.KeyidStr,
+		}).Debug("Encrypting intermediate hop")
 		m.insertHeader(header.encode(slotDataBytes))
 	}
 	if len(chain) != 0 {
@@ -315,11 +311,19 @@ func timedURLFetch(url, filename string) {
 			doFetch = false
 		}
 		if doFetch {
-			Info.Printf("Fetching %s and storing in %s", url, filename)
 			err = httpGet(url, filename)
 			if err != nil {
-				Warn.Println(err)
+				log.WithFields(logrus.Fields{
+					"url":      url,
+					"filename": filename,
+					"error":    err,
+				}).Warn("URL Retrieve Failed")
+				return
 			}
+			log.WithFields(logrus.Fields{
+				"url":      url,
+				"filename": filename,
+			}).Info("Retrieved URL")
 		}
 	}
 }
@@ -342,10 +346,14 @@ func dummy() {
 	chain, err = makeChain(inChain)
 	sendTo := chain[0]
 	if err != nil {
-		Warn.Printf("Dummy creation failed: %s", err)
+		log.WithFields(logrus.Fields{
+			"error": err,
+		}).Warn("Dummy creation failed.")
 		return
 	}
-	Trace.Printf("Sending dummy through: %s.", strings.Join(chain, ","))
+	log.WithFields(logrus.Fields{
+		"chain": strings.Join(chain, ","),
+	}).Debug("Sending dummy message.")
 	yamnMsg := encodeMsg(plainMsg, chain, *final)
 	writeMessageToPool(sendTo, yamnMsg)
 	return

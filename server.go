@@ -3,8 +3,10 @@
 package main
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/Sirupsen/logrus"
 	"github.com/crooks/yamn/idlog"
 	"github.com/crooks/yamn/keymgr"
 	"github.com/crooks/yamn/quickmail"
@@ -40,12 +42,16 @@ func loopServer() (err error) {
 	createDirs()
 
 	// Open the IDlog
-	Trace.Printf("Opening ID Log: %s", cfg.Files.IDlog)
+	log.WithFields(logrus.Fields{
+		"Filename": cfg.Files.IDlog,
+	}).Debug("Opening ID Log")
 	// NewInstance takes the filename and entry validity in days
 	IdDb = idlog.NewIDLog(cfg.Files.IDlog, cfg.Remailer.IDexp)
 	defer IdDb.Close()
 	// Open the chunk DB
-	Trace.Printf("Opening the Chunk DB: %s", cfg.Files.ChunkDB)
+	log.WithFields(logrus.Fields{
+		"Filename": cfg.Files.ChunkDB,
+	}).Debug("Opening Chunk Database")
 	ChunkDb = OpenChunk(cfg.Files.ChunkDB)
 	ChunkDb.SetExpire(cfg.Remailer.ChunkExpire)
 
@@ -70,8 +76,9 @@ func loopServer() (err error) {
 		*/
 		refreshPubkey(secret)
 	}
-
-	Info.Printf("Secret keyring contains %d keys", secret.Count())
+	log.WithFields(logrus.Fields{
+		"SecKeys": secret.Count(),
+	}).Info("Secret Keyring purge completed.")
 
 	// Define triggers for timed events
 	daily := time.Now()
@@ -84,12 +91,17 @@ func loopServer() (err error) {
 
 	// Actually start the server loop
 	if runAsDaemon {
-		Info.Printf("Starting YAMN server: %s", cfg.Remailer.Name)
-		Info.Printf("Detaching Pool processing")
+		log.WithFields(logrus.Fields{
+			"Remailer": cfg.Remailer.Name,
+			"Address":  cfg.Remailer.Address,
+		}).Info("Starting YAMN server.")
+		log.Info("Detaching Pool processing.")
 		go serverPoolOutboundSend()
 	} else {
-		Info.Printf("Performing routine remailer functions for: %s",
-			cfg.Remailer.Name)
+		log.WithFields(logrus.Fields{
+			"Remailer": cfg.Remailer.Name,
+			"Address":  cfg.Remailer.Address,
+		}).Info("Performing routine remailer functions.")
 	}
 	for {
 		// Panic if the pooldir doesn't exist
@@ -101,7 +113,7 @@ func loopServer() (err error) {
 
 		// Midnight events
 		if time.Now().Day() != dayOfMonth {
-			Info.Println("Performing midnight events")
+			log.Info("Performing midnight events")
 			// Remove expired keys from memory and rewrite a
 			// secring file without expired keys.
 			if purgeSecring(secret) == 0 {
@@ -119,7 +131,7 @@ func loopServer() (err error) {
 		}
 		// Daily events
 		if time.Since(daily) > oneDay {
-			Info.Println("Performing daily events")
+			log.Info("Performing daily events")
 			// Complain about poor configs
 			nagOperator()
 			// Reset today so we don't do these tasks for the next
@@ -128,7 +140,7 @@ func loopServer() (err error) {
 		}
 		// Hourly events
 		if time.Since(hourly) > time.Hour {
-			Trace.Println("Performing hourly events")
+			log.Debug("Performing hourly events")
 			/*
 				The following two conditions try to import new
 				pubring and mlist2 URLs.  If they fail, a
@@ -149,10 +161,9 @@ func loopServer() (err error) {
 			}
 			// Test to see if the pubring.mix file has been updated
 			if Pubring.KeyRefresh() {
-				Trace.Printf(
-					"Reimporting Public Keyring: %s",
-					cfg.Files.Pubring,
-				)
+				log.WithFields(logrus.Fields{
+					"PubRing": cfg.Files.Pubring,
+				}).Debug("Reimporting Public Keyring.")
 				Pubring.ImportPubring()
 			}
 			// Report throughput
@@ -175,13 +186,20 @@ func loopServer() (err error) {
 func refreshPubkey(secret *keymgr.Secring) {
 	tmpKey := cfg.Files.Pubkey + ".tmp"
 	keyidstr := secret.WriteMyKey(tmpKey)
-	Info.Printf("Advertising keyid: %s", keyidstr)
-	Trace.Printf("Writing current public key to %s", tmpKey)
+	log.WithFields(logrus.Fields{
+		"KeyID": keyidstr,
+	}).Info("Advertising Public Key.")
+	log.WithFields(logrus.Fields{
+		"TempPubFile": tmpKey,
+	}).Debug("Wrote Public Key to temp file.")
 	// Overwrite the published key with the refreshed version
-	Trace.Printf("Renaming %s to %s", tmpKey, cfg.Files.Pubkey)
+	log.WithFields(logrus.Fields{
+		"OldName": tmpKey,
+		"NewName": cfg.Files.Pubkey,
+	}).Debug("Renaming temporary key file.")
 	err := os.Rename(tmpKey, cfg.Files.Pubkey)
 	if err != nil {
-		Warn.Println(err)
+		log.Warn(err)
 	}
 }
 
@@ -189,52 +207,53 @@ func refreshPubkey(secret *keymgr.Secring) {
 // are found, it triggers a generation.
 func purgeSecring(secret *keymgr.Secring) (active int) {
 	active, expiring, expired, purged := secret.Purge()
-	Info.Printf(
-		"Key purge complete. Active=%d, Expiring=%d, Expired=%d, "+
-			"Purged=%d",
-		active,
-		expiring,
-		expired,
-		purged,
-	)
+	log.WithFields(logrus.Fields{
+		"Active":   active,
+		"Expiring": expiring,
+		"Expired":  expired,
+		"Purged":   purged,
+	}).Info("Secret Key purge completed.")
 	return
 }
 
 // generateKeypair creates a new keypair and publishes it
 func generateKeypair(secret *keymgr.Secring) {
-	Info.Println("Generating and advertising a new key pair")
+	log.Info("Generating and advertising a new key pair")
 	pub, sec := eccGenerate()
 	keyidstr := secret.Insert(pub, sec)
-	Info.Printf("Generated new keypair with keyid: %s", keyidstr)
-	Info.Println("Writing new Public Key to disc")
+	log.WithFields(logrus.Fields{
+		"KeyID": keyidstr,
+	}).Info("Generated new key pair.")
+	log.Debug("Writing new Public Key to disc")
 	secret.WritePublic(pub, keyidstr)
-	Info.Println("Inserting Secret Key into Secring")
+	log.Debug("Inserting Secret Key into Secring")
 	secret.WriteSecret(keyidstr)
 }
 
 // idLogExpire deletes old entries in the ID Log
 func idLogExpire() {
 	count, deleted := IdDb.Expire()
-	Info.Printf("ID Log: Expired=%d, Contains=%d", deleted, count)
+	log.WithFields(logrus.Fields{
+		"Expired":  deleted,
+		"Contains": count,
+	}).Info("ID Log expiry complete.")
 }
 
 // chunkClean expires entries from the chunk DB and deletes any stranded files
 func chunkClean() {
 	cret, cexp := ChunkDb.Expire()
 	if cexp > 0 {
-		Info.Printf(
-			"Chunk expiry complete. Retained=%d, Expired=%d\n",
-			cret,
-			cexp,
-		)
+		log.WithFields(logrus.Fields{
+			"Expired":  cexp,
+			"Contains": cret,
+		}).Info("Chunk expiry complete.")
 	}
 	fret, fdel := ChunkDb.Housekeep()
 	if fdel > 0 {
-		Info.Printf(
-			"Stranded chunk deletion: Retained=%d, Deleted=%d",
-			fret,
-			fdel,
-		)
+		log.WithFields(logrus.Fields{
+			"Deleted":  fdel,
+			"Retained": fret,
+		}).Info("Stranded chunk deletion complete.")
 	}
 }
 
@@ -242,28 +261,25 @@ func chunkClean() {
 func nagOperator() {
 	// Complain about excessively small loop values.
 	if cfg.Pool.Loop < 60 {
-		Warn.Printf(
-			"Loop time of %d is excessively low. Will loop "+
-				"every 60 seconds. A higher setting is recommended.",
-			cfg.Pool.Loop,
-		)
+		log.WithFields(logrus.Fields{
+			"LoopSecs": cfg.Pool.Loop,
+		}).Warn("Pool loop time of is excessively low. Will loop " +
+			"every 60 seconds. A higher setting is recommended.")
 	}
 	// Complain about high pool rates.
 	if cfg.Pool.Rate > 90 && !flag_send {
-		Warn.Printf(
-			"Your pool rate of %d is excessively high. Unless "+
-				"testing, a lower setting is recommended.",
-			cfg.Pool.Rate,
-		)
+		log.WithFields(logrus.Fields{
+			"Rate": cfg.Pool.Rate,
+		}).Warn("Pool rate is excessively high. Unless " +
+			"testing, a lower setting is recommended.")
 	}
 	// Complain about running a remailer with flag_send
 	if flag_send && flag_remailer {
-		Warn.Printf(
-			"Your remailer will flush the outbound pool every "+
-				"%d seconds. Unless you're testing, this is "+
-				"probably not what you want.",
-			cfg.Pool.Loop,
-		)
+		log.WithFields(logrus.Fields{
+			"LoopSecs": cfg.Pool.Loop,
+		}).Warn("Your remailer will flush the outbound pool every " +
+			"cycle. Unless you're testing, this is probably " +
+			"not what you want.")
 	}
 }
 
@@ -271,57 +287,55 @@ func createDirs() {
 	var err error
 	err = os.MkdirAll(cfg.Files.IDlog, 0700)
 	if err != nil {
-		Error.Println(
-			"Failed to create %s. %s",
-			cfg.Files.IDlog,
-			err,
-		)
-		os.Exit(1)
+		log.WithFields(logrus.Fields{
+			"Dir":   cfg.Files.IDlog,
+			"Error": err,
+		}).Fatal("Failed to create ID Log directory.")
 	}
 	err = os.MkdirAll(cfg.Files.Pooldir, 0700)
 	if err != nil {
-		Error.Println(
-			"Failed to create %s. %s",
-			cfg.Files.Pooldir,
-			err,
-		)
-		os.Exit(1)
+		log.WithFields(logrus.Fields{
+			"Dir":   cfg.Files.Pooldir,
+			"Error": err,
+		}).Fatal("Failed to create Pool directory.")
 	}
 	err = os.MkdirAll(cfg.Files.ChunkDB, 0700)
 	if err != nil {
-		Error.Println(
-			"Failed to create %s. %s",
-			cfg.Files.ChunkDB,
-			err,
-		)
-		os.Exit(1)
+		log.WithFields(logrus.Fields{
+			"Dir":   cfg.Files.ChunkDB,
+			"Error": err,
+		}).Fatal("Failed to create Chunk DB directory.")
 	}
 	err = os.MkdirAll(cfg.Files.Maildir, 0700)
 	if err != nil {
-		Error.Println(
-			"Failed to create %s. %s",
-			cfg.Files.Maildir,
-			err,
-		)
-		os.Exit(1)
+		log.WithFields(logrus.Fields{
+			"Dir":   cfg.Files.Maildir,
+			"Error": err,
+		}).Fatal("Failed to create Maildir directory.")
 	}
 	mdirnew := path.Join(cfg.Files.Maildir, "new")
 	err = os.MkdirAll(mdirnew, 0700)
 	if err != nil {
-		Error.Println("Failed to create %s. %s", mdirnew, err)
-		os.Exit(1)
+		log.WithFields(logrus.Fields{
+			"Dir":   mdirnew,
+			"Error": err,
+		}).Fatal("Failed to create Maildir directory.")
 	}
 	mdircur := path.Join(cfg.Files.Maildir, "cur")
 	err = os.MkdirAll(mdircur, 0700)
 	if err != nil {
-		Error.Println("Failed to create %s. %s", mdircur, err)
-		os.Exit(1)
+		log.WithFields(logrus.Fields{
+			"Dir":   mdircur,
+			"Error": err,
+		}).Fatal("Failed to create Maildir directory.")
 	}
 	mdirtmp := path.Join(cfg.Files.Maildir, "tmp")
 	err = os.MkdirAll(mdirtmp, 0700)
 	if err != nil {
-		Error.Println("Failed to create %s. %s", mdirtmp, err)
-		os.Exit(1)
+		log.WithFields(logrus.Fields{
+			"Dir":   mdirtmp,
+			"Error": err,
+		}).Fatal("Failed to create Maildir directory.")
 	}
 }
 
@@ -332,7 +346,7 @@ func decodeMsg(rawMsg []byte, secret *keymgr.Secring) (err error) {
 	// At this point, rawMsg should always be messageBytes in length
 	err = lenCheck(len(rawMsg), messageBytes)
 	if err != nil {
-		Error.Println(err)
+		log.Error(err)
 		return
 	}
 
@@ -342,14 +356,19 @@ func decodeMsg(rawMsg []byte, secret *keymgr.Secring) (err error) {
 	recipientKeyID := header.getRecipientKeyID()
 	recipientSK, err := secret.GetSK(recipientKeyID)
 	if err != nil {
-		Warn.Printf("Failed to ascertain Recipient SK: %s", err)
+		log.WithFields(logrus.Fields{
+			"KeyID": recipientKeyID,
+			"Error": err,
+		}).Warn("Failed to ascertain recipient Secret Key")
 		return
 	}
 	header.setRecipientSK(recipientSK)
 
 	slotDataBytes, packetVersion, err := header.decode()
 	if err != nil {
-		Warn.Printf("Header decode failed: %s", err)
+		log.WithFields(logrus.Fields{
+			"Error": err,
+		}).Warn("Header decode failed.")
 		return
 	}
 	switch packetVersion {
@@ -371,23 +390,25 @@ func decodeV2(d *decMessage, slotDataBytes []byte) (err error) {
 	slotData := decodeSlotData(slotDataBytes)
 	// Test uniqueness of packet ID
 	if !IdDb.Unique(slotData.getPacketID()) {
+		log.WithFields(logrus.Fields{
+			"PacketID": hex.EncodeToString(slotData.getPacketID()),
+		}).Debug("Packet ID collision")
 		err = errors.New("Packet ID collision")
 		return
 	}
 	if !d.testAntiTag(slotData.getTagHash()) {
-		Warn.Println("Anti-tag digest mismatch")
+		log.Warn("Anti-tag digest mismatch")
 		return
 	}
 	if slotData.ageTimestamp() > cfg.Remailer.MaxAge {
-		Warn.Printf(
-			"Max packet age in days exceeded. Age=%d, Max=%d",
-			slotData.ageTimestamp(),
-			cfg.Remailer.MaxAge,
-		)
+		log.WithFields(logrus.Fields{
+			"Days":    slotData.ageTimestamp(),
+			"MaxDays": cfg.Remailer.MaxAge,
+		}).Warn("Maximum packet age exceeded.")
 		return
 	}
 	if slotData.ageTimestamp() < 0 {
-		Warn.Println("Packet timestamp is in the future. Rejecting")
+		log.Warn("Packet timestamp is in the future. Rejecting it.")
 		return
 	}
 	if slotData.getPacketType() == 0 {
@@ -402,8 +423,7 @@ func decodeV2(d *decMessage, slotDataBytes []byte) (err error) {
 			This prevents it being emailed back to us.
 		*/
 		if inter.getNextHop() == cfg.Remailer.Address {
-			Info.Println(
-				"Message loops back to us.",
+			log.Info("Message loops back to us. " +
 				"Storing in pool instead of sending it.")
 			outfileName := randPoolFilename("i")
 			err = ioutil.WriteFile(
@@ -412,7 +432,10 @@ func decodeV2(d *decMessage, slotDataBytes []byte) (err error) {
 				0600,
 			)
 			if err != nil {
-				Warn.Printf("Failed to write to pool: %s", err)
+				log.WithFields(logrus.Fields{
+					"Filename": outfileName,
+					"Error":    err,
+				}).Error("Failed to write file to pool.")
 				return
 			}
 			stats.outLoop++
@@ -429,7 +452,7 @@ func decodeV2(d *decMessage, slotDataBytes []byte) (err error) {
 		// Decode Exit
 		final := decodeFinal(slotData.packetInfo)
 		if final.getDeliveryMethod() == 255 {
-			Trace.Println("Discarding dummy message")
+			log.Debug("Discarding dummy message")
 			stats.inDummy++
 			return
 		}
@@ -452,28 +475,22 @@ func decodeV2(d *decMessage, slotDataBytes []byte) (err error) {
 					// remailer
 					randhop(plain)
 				} else {
-					Warn.Println(
-						"Randhopping doesn't support " +
-							"multi-chunk messages. As " +
-							"per Mixmaster, this " +
-							"message will be dropped.",
-					)
+					log.Warn("Randhopping doesn't support " +
+						"multi-chunk messages.")
 				}
 				return
 			}
 			smtpMethod(plain, final)
 		default:
-			Warn.Printf(
-				"Unsupported Delivery Method: %d",
-				final.getDeliveryMethod(),
-			)
+			log.WithFields(logrus.Fields{
+				"Method": final.getDeliveryMethod(),
+			}).Warn("Unsupported Delivery Method.")
 			return
 		}
 	} else {
-		Warn.Printf(
-			"Unknown Packet Type: %d",
-			slotData.getPacketType(),
-		)
+		log.WithFields(logrus.Fields{
+			"PacketType": slotData.getPacketType(),
+		}).Warn("Unknown Packet Type.")
 		return
 	}
 	return
@@ -490,42 +507,40 @@ func smtpMethod(plain []byte, final *slotFinal) {
 	}
 	// We're an exit and this is a multi-chunk message
 	chunkFilename := writePlainToPool(plain, "p")
-	Trace.Printf(
-		"Pooled partial chunk. MsgID=%x, Num=%d, "+
-			"Parts=%d, Filename=%s",
-		final.getMessageID(),
-		final.getChunkNum(),
-		final.getNumChunks(),
-		chunkFilename,
-	)
+	log.WithFields(logrus.Fields{
+		"MsgID":    final.getMessageID(),
+		"ChunkNum": final.getChunkNum(),
+		"Chunks":   final.getNumChunks(),
+		"Filename": chunkFilename,
+	}).Info("Pooled partial message chunk.")
 	// Fetch the chunks info from the DB for the given message ID
 	chunks := ChunkDb.Get(final.getMessageID(), final.getNumChunks())
 	// This saves losts of -1's as slices start at 0 and chunks at 1
 	cslot := final.getChunkNum() - 1
 	// Test that the slot for this chunk is empty
 	if chunks[cslot] != "" {
-		Warn.Printf(
-			"Duplicate chunk %d in MsgID: %x",
-			final.chunkNum,
-			final.messageID,
-		)
+		log.WithFields(logrus.Fields{
+			"MsgID":    final.getMessageID(),
+			"ChunkNum": final.getChunkNum(),
+		}).Warn("Duplicate partial message chunk.")
 	}
 	// Insert the new chunk into the slice
 	chunks[cslot] = chunkFilename
-	Trace.Printf(
-		"Chunk state: %s",
-		strings.Join(chunks, ","),
-	)
+	log.WithFields(logrus.Fields{
+		"Chunks": strings.Join(chunks, ","),
+	}).Debug("Partial message construction status.")
 	// Test if all chunk slots are populated
 	if IsPopulated(chunks) {
 		newPoolFile := randPoolFilename("m")
-		Trace.Printf(
-			"Assembling chunked message into %s",
-			newPoolFile,
-		)
+		log.WithFields(logrus.Fields{
+			"Filename": newPoolFile,
+		}).Info("Reconstructing chunked message.")
 		err = ChunkDb.Assemble(newPoolFile, chunks)
 		if err != nil {
-			Warn.Printf("Chunk assembly failed: %s", err)
+			log.WithFields(logrus.Fields{
+				"Filename": newPoolFile,
+				"Error":    err,
+			}).Warn("Chunked reconstruction failed")
 			// Don't return here or the bad chunk will remain in
 			// the DB.
 		}
@@ -544,7 +559,7 @@ func smtpMethod(plain []byte, final *slotFinal) {
 func randhop(plainMsg []byte) {
 	var err error
 	if len(plainMsg) == 0 {
-		Info.Println("Zero-byte message during randhop, ignoring it.")
+		log.Info("Zero-byte message during randhop. Ignoring it.")
 		return
 	}
 	// Make a single hop chain with a random node
@@ -553,15 +568,19 @@ func randhop(plainMsg []byte) {
 	var chain []string
 	chain, err = makeChain(in_chain)
 	if err != nil {
-		Warn.Println(err)
+		log.Warn(err)
 		return
 	}
 	sendTo := chain[0]
 	if len(chain) != 1 {
-		err = fmt.Errorf("Randhop chain must be single hop.  Got=%d", len(chain))
-		panic(err)
+		log.WithFields(logrus.Fields{
+			"Chain":    strings.Join(chain, ","),
+			"ChainLen": len(chain),
+		}).Fatal("Randhop chain must be single hop.")
 	}
-	Trace.Printf("Performing a random hop to Exit Remailer: %s.", chain[0])
+	log.WithFields(logrus.Fields{
+		"Remailer": chain[0],
+	}).Info("Randhop to Exit Remailer.")
 	yamnMsg := encodeMsg(plainMsg, chain, *final)
 	writeMessageToPool(sendTo, yamnMsg)
 	stats.outRandhop++
@@ -573,15 +592,23 @@ func remailerFoo(subject, sender string) (err error) {
 	m := quickmail.NewMessage()
 	m.Set("From", cfg.Remailer.Address)
 	m.Set("To", sender)
+	if len(subject) > 20 {
+		// Trim the Subject, we only need a "remailer-foo"
+		subject = subject[:20]
+	}
 	if strings.HasPrefix(subject, "remailer-key") {
 		// remailer-key
-		Trace.Printf("remailer-key request from %s", sender)
+		log.WithFields(logrus.Fields{
+			"Sender": sender,
+		}).Debug("Remailer-Key request")
 		m.Set("Subject", fmt.Sprintf("Remailer key for %s", cfg.Remailer.Name))
 		m.Filename = cfg.Files.Pubkey
 		m.Prefix = "Here is the Mixmaster key:\n\n=-=-=-=-=-=-=-=-=-=-=-="
 	} else if strings.HasPrefix(subject, "remailer-conf") {
 		// remailer-conf
-		Trace.Printf("remailer-conf request from %s", sender)
+		log.WithFields(logrus.Fields{
+			"Sender": sender,
+		}).Debug("Remailer-Conf request")
 		m.Set(
 			"Subject",
 			fmt.Sprintf("Capabilities of the %s remailer", cfg.Remailer.Name))
@@ -605,42 +632,55 @@ func remailerFoo(subject, sender string) (err error) {
 		var pubList []string
 		pubList, err := keymgr.Headers(cfg.Files.Pubring)
 		if err != nil {
-			Info.Printf("Could not read %s", cfg.Files.Pubring)
+			log.WithFields(logrus.Fields{
+				"Pubring": cfg.Files.Pubring,
+			}).Info("Could not read Public Keyring")
 		} else {
 			m.List(pubList)
 		}
 	} else if strings.HasPrefix(subject, "remailer-adminkey") {
 		// remailer-adminkey
-		Trace.Printf("remailer-adminkey request from %s", sender)
+		log.WithFields(logrus.Fields{
+			"Sender": sender,
+		}).Debug("Remailer-AdminKey request")
 		m.Set(
 			"Subject",
 			fmt.Sprintf("Admin key for the %s remailer", cfg.Remailer.Name))
 		m.Filename = cfg.Files.Adminkey
 	} else if strings.HasPrefix(subject, "remailer-help") {
 		// remailer-help
-		Trace.Printf("remailer-help request from %s", sender)
+		log.WithFields(logrus.Fields{
+			"Sender": sender,
+		}).Debug("Remailer-AdminKey request")
 		m.Set(
 			"Subject",
 			fmt.Sprintf("Your help request for the %s Anonymous Remailer",
 				cfg.Remailer.Name))
 		m.Filename = cfg.Files.Help
 	} else {
-		if len(subject) > 20 {
-			// Truncate long subject headers before logging them
-			subject = subject[:20]
-		}
+		log.WithFields(logrus.Fields{
+			"Sender":  sender,
+			"Subject": subject,
+		}).Info("Ignoring unknown info request.")
 		err = fmt.Errorf("Ignoring request for %s", subject)
 		return
 	}
 	var msg []byte
 	msg, err = m.Compile()
 	if err != nil {
-		Info.Printf("Unable to send %s", subject)
+		log.WithFields(logrus.Fields{
+			"Subject": subject,
+			"Error":   err,
+		}).Error("Construction of info request failed.")
 		return
 	}
 	err = mailBytes(msg, []string{sender})
 	if err != nil {
-		Warn.Println("Failed to send %s to %s", subject, sender)
+		log.WithFields(logrus.Fields{
+			"Subject": subject,
+			"Sender":  sender,
+			"Error":   err,
+		}).Warn("Failed to reply to info request.")
 		return
 	}
 	return

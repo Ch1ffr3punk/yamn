@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"fmt"
+	"github.com/Sirupsen/logrus"
 	"github.com/dchest/blake2s"
 	"io"
 	"mime/multipart"
@@ -12,6 +13,7 @@ import (
 )
 
 func multipartHandler(w http.ResponseWriter, r *http.Request) {
+	// Allow in-memory size up to 32k
 	r.ParseMultipartForm(32768)
 	file, handler, err := r.FormFile("yamn")
 	if err != nil {
@@ -125,7 +127,9 @@ func client(filename string) {
 	if err != nil {
 		panic(err)
 	}
-	//Trace.Printf("Transferred %s via HTTP", filename)
+	log.WithFields(logrus.Fields{
+		"Filename": filename,
+	}).Debug("Transferred file via HTTP.")
 
 	if resp.StatusCode == http.StatusOK {
 		fmt.Printf("%d: Status OK\n", resp.StatusCode)

@@ -18,16 +18,17 @@ const (
 )
 
 type Remailer struct {
-	name    string    // Remailer Shortname
-	Address string    // Remailer Address
-	Keyid   []byte    // 16 Byte Mixmaster KeyID
-	version string    // Mixmaster version
-	caps    string    // Remailer capstring
-	PK      []byte    // Curve25519 Public Key
-	from    time.Time // Valid-from date
-	until   time.Time // Valid until date
-	latent  int       // Latency (minutes)
-	uptime  int       // Uptime (10ths of a %)
+	name     string    // Remailer Shortname
+	Address  string    // Remailer Address
+	Keyid    []byte    // 16 Byte Mixmaster KeyID
+	KeyidStr string    // String representation of KeyID bytes in Hex
+	version  string    // Mixmaster version
+	caps     string    // Remailer capstring
+	PK       []byte    // Curve25519 Public Key
+	from     time.Time // Valid-from date
+	until    time.Time // Valid until date
+	latent   int       // Latency (minutes)
+	uptime   int       // Uptime (10ths of a %)
 }
 
 type Pubring struct {
@@ -119,7 +120,7 @@ func (p Pubring) KeyList() (addresses []string) {
 		key := p.pub[addy]
 		header := key.name + " "
 		header += key.Address + " "
-		header += hex.EncodeToString(key.Keyid) + " "
+		header += key.KeyidStr + " "
 		header += key.version + " "
 		header += key.caps + " "
 		header += key.from.UTC().Format(date_format) + " "
@@ -368,6 +369,7 @@ func (p *Pubring) ImportPubring() (err error) {
 			}
 			rem = new(Remailer)
 			rem.name = elements[0]
+			rem.KeyidStr = elements[2]
 			rem.Keyid, err = hex.DecodeString(elements[2])
 			if err != nil {
 				// keyid is not valid hex

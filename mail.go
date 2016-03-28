@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"fmt"
+	"github.com/Sirupsen/logrus"
 	"net"
 	"net/mail"
 	"net/smtp"
@@ -18,7 +19,9 @@ func assemble(msg mail.Message) []byte {
 	buf := new(bytes.Buffer)
 	for h := range msg.Header {
 		if strings.HasPrefix(h, "Yamn-") {
-			Error.Printf("Ignoring internal mail header in assemble phase: %s", h)
+			log.WithFields(logrus.Fields{
+				"Header": h,
+			}).Error("Ignoring internal mail header in assembly phase.")
 		} else {
 			buf.WriteString(h + ": " + msg.Header.Get(h) + "\n")
 			//fmt.Printf("%s: %s\n", h, msg.Header.Get(h))
@@ -37,7 +40,9 @@ func headToAddy(h mail.Header, header string) (addys []string) {
 	}
 	addyList, err := h.AddressList(header)
 	if err != nil {
-		Warn.Printf("Failed to parse header: %s", header)
+		log.WithFields(logrus.Fields{
+			"Header": header,
+		}).Warn("Failed to parse header.")
 	}
 	for _, addy := range addyList {
 		addys = append(addys, addy.Address)
@@ -77,19 +82,17 @@ func mxLookup(email string) (relay string, err error) {
 	mxRecords, err := net.LookupMX(emailParts.domain)
 	if err != nil {
 		relay = emailParts.domain
-		Trace.Printf(
-			"DNS MX lookup failed for %s.  Using hostname.",
-			emailParts.domain,
-		)
+		log.WithFields(logrus.Fields{
+			"Domain": emailParts.domain,
+		}).Debug("DNS MX lookup failed.  Using hostname.")
 		err = nil
 		return
 	}
 	relay = mxRecords[0].Host
-	Trace.Printf(
-		"DNS lookup: Hostname=%s, MX=%s",
-		emailParts.domain,
-		relay,
-	)
+	log.WithFields(logrus.Fields{
+		"Hostname": emailParts.domain,
+		"MX":       relay,
+	}).Debug("DNS lookup succeeded.")
 	return
 }
 
@@ -144,14 +147,20 @@ func mailPoolFile(filename string) (delFlag bool, err error) {
 
 	f, err := os.Open(filename)
 	if err != nil {
-		Error.Printf("Failed to read file for mailing: %s", err)
+		log.WithFields(logrus.Fields{
+			"Filename": filename,
+			"Error":    err,
+		}).Error("Failed to read file for mailing.")
 		return
 	}
 	defer f.Close()
 
 	msg, err := mail.ReadMessage(f)
 	if err != nil {
-		Error.Printf("Failed to process mail file: %s", err)
+		log.WithFields(logrus.Fields{
+			"Filename": filename,
+			"Error":    err,
+		}).Error("Unable to process mail file.")
 		// If we can't process it, it'll never get sent.  Mark for delete.
 		delFlag = true
 		return
@@ -161,29 +170,35 @@ func mailPoolFile(filename string) (delFlag bool, err error) {
 	pooledHeader := msg.Header.Get("Yamn-Pooled-Date")
 	if pooledHeader == "" {
 		// Legacy condition.  All current versions apply this header.
-		Warn.Println("No Yamn-Pooled-Date header in message")
+		log.Warn("No Yamn-Pooled-Date header in message")
 	} else {
 		var pooledDate time.Time
 		pooledDate, err = time.Parse(shortdate, pooledHeader)
 		if err != nil {
-			Error.Printf("%s: Failed to parse Yamn-Pooled-Date: %s", filename, err)
+			log.WithFields(logrus.Fields{
+				"Filename": filename,
+				"Error":    err,
+			}).Warn("Failed to parse Yamn-Pooled-Date header.")
 			return
 		}
 		age := daysAgo(pooledDate)
 		if age > cfg.Pool.MaxAge {
 			// The message has expired.  Give up trying to send it.
-			Info.Printf(
-				"%s: Refusing to mail pool file. Exceeds max age of %d days",
-				filename,
-				cfg.Pool.MaxAge,
-			)
+			log.WithFields(logrus.Fields{
+				"Filename": filename,
+				"Age":      age,
+				"MaxAge":   cfg.Pool.MaxAge,
+			}).Warn("Refusing to mail pool file. Exceeds max age.")
 			// Set deletion flag.  We don't want to retain old
 			// messages forever.
 			delFlag = true
 			return
 		}
 		if age > 0 {
-			Trace.Printf("Mailing pooled file that's %d days old.", age)
+			log.WithFields(logrus.Fields{
+				"Filename": filename,
+				"Age":      age,
+			}).Debug("Mailing old pooled file.")
 		}
 		// Delete the internal header we just tested.
 		delete(msg.Header, "Yamn-Pooled-Date")
@@ -209,8 +224,9 @@ func mailPoolFile(filename string) (delFlag bool, err error) {
 
 // Mail a byte payload to a given address
 func mailBytes(payload []byte, sendTo []string) (err error) {
-	// Test if the message is destined for the local remailer
-	Trace.Printf("Message recipients are: %s", strings.Join(sendTo, ","))
+	log.WithFields(logrus.Fields{
+		"Recipients": strings.Join(sendTo, ","),
+	}).Debug("Mailing message via SMTP.")
 	if cfg.Mail.Outfile {
 		var f *os.File
 		filename := randPoolFilename("outfile-")
@@ -218,7 +234,9 @@ func mailBytes(payload []byte, sendTo []string) (err error) {
 		defer f.Close()
 		_, err = f.WriteString(string(payload))
 		if err != nil {
-			Warn.Printf("Outfile write failed: %s\n", err)
+			log.WithFields(logrus.Fields{
+				"Error": err,
+			}).Warn("Outfile write failed.")
 			return
 		}
 	} else if cfg.Mail.Pipe != "" {
@@ -226,13 +244,13 @@ func mailBytes(payload []byte, sendTo []string) (err error) {
 	} else if cfg.Mail.Sendmail {
 		err = sendmail(payload, sendTo)
 		if err != nil {
-			Warn.Println("Sendmail failed")
+			log.Warn("Sendmail failed")
 			return
 		}
 	} else {
 		err = smtpRelay(payload, sendTo)
 		if err != nil {
-			Warn.Println("SMTP relay failed")
+			log.Warn("SMTP relay failed")
 			return
 		}
 	}
@@ -282,7 +300,10 @@ func smtpRelay(payload []byte, sendTo []string) (err error) {
 	if cfg.Mail.MXRelay && len(sendTo) == 1 {
 		mx, err := mxLookup(sendTo[0])
 		if err == nil {
-			Trace.Printf("Doing direct relay for %s to %s:25.", sendTo[0], mx)
+			log.WithFields(logrus.Fields{
+				"Recipient": sendTo[0],
+				"MX":        mx,
+			}).Debug("Doing direct SMTP relay.")
 			relay = mx
 			port = 25
 		}
@@ -291,24 +312,29 @@ func smtpRelay(payload []byte, sendTo []string) (err error) {
 
 	conn, err := net.Dial("tcp", serverAddr)
 	if err != nil {
-		Warn.Printf("Dial Error: Server=%s, Error=%s", serverAddr, err)
+		log.WithFields(logrus.Fields{
+			"Server": serverAddr,
+			"Error":  err,
+		}).Warn("TCP Dial Error.")
 		return
 	}
 
 	client, err := smtp.NewClient(conn, relay)
 	if err != nil {
-		Warn.Printf("SMTP Connection Error: Server=%s, Error=%s", serverAddr, err)
+		log.WithFields(logrus.Fields{
+			"Server": serverAddr,
+			"Error":  err,
+		}).Warn("SMTP Connection Error.")
 		return
 	}
 	// Test is the remote MTA supports STARTTLS
 	ok, _ := client.Extension("STARTTLS")
 	if ok && cfg.Mail.UseTLS {
 		if err = client.StartTLS(conf); err != nil {
-			Warn.Printf(
-				"Error performing STARTTLS: Server=%s, Error=%s",
-				serverAddr,
-				err,
-			)
+			log.WithFields(logrus.Fields{
+				"Server": serverAddr,
+				"Error":  err,
+			}).Warn("Error performing STARTTLS.")
 			return
 		}
 	}
@@ -323,7 +349,10 @@ func smtpRelay(payload []byte, sendTo []string) (err error) {
 			cfg.Mail.SMTPRelay,
 		)
 		if err = client.Auth(auth); err != nil {
-			Warn.Printf("Auth Error:  Server=%s, Error=%s", serverAddr, err)
+			log.WithFields(logrus.Fields{
+				"Server": serverAddr,
+				"Error":  err,
+			}).Warn("SMTP Authentication Error.")
 			return
 		}
 	}
@@ -337,33 +366,39 @@ func smtpRelay(payload []byte, sendTo []string) (err error) {
 		sender = cfg.Remailer.Address
 	}
 	if err = client.Mail(sender); err != nil {
-		Warn.Printf("SMTP Error: Server=%s, Error=%s", serverAddr, err)
+		log.WithFields(logrus.Fields{
+			"Server": serverAddr,
+			"Error":  err,
+		}).Warn("SMTP Mailing Error.")
 		return
 	}
 
 	for _, addr := range sendTo {
 		if err = client.Rcpt(addr); err != nil {
-			Warn.Printf("Error: %s\n", err)
+			log.WithFields(logrus.Fields{
+				"Recipient": addr,
+				"Error":     err,
+			}).Warn("SMTP Recipient Error.")
 			return
 		}
 	}
 
 	w, err := client.Data()
 	if err != nil {
-		Warn.Printf("Error: %s\n", err)
+		log.Warnf("Error: %s\n", err)
 		return
 	}
 
 	_, err = w.Write(payload)
 	if err != nil {
-		Warn.Printf("Error: %s\n", err)
+		log.Warnf("Error: %s\n", err)
 		return
 
 	}
 
 	err = w.Close()
 	if err != nil {
-		Warn.Printf("Error: %s\n", err)
+		log.Warnf("Error: %s\n", err)
 		return
 
 	}
@@ -382,7 +417,10 @@ func sendmail(payload []byte, sendTo []string) (err error) {
 	relay := fmt.Sprintf("%s:%d", cfg.Mail.SMTPRelay, cfg.Mail.SMTPPort)
 	err = smtp.SendMail(relay, auth, cfg.Remailer.Address, sendTo, payload)
 	if err != nil {
-		Warn.Println(err)
+		log.WithFields(logrus.Fields{
+			"Relay": cfg.Mail.SMTPRelay,
+			"Error": err,
+		}).Warn("Internal SMTP Sendmail failed.")
 		return
 	}
 	return

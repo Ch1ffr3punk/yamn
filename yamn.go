@@ -4,14 +4,12 @@ package main
 
 import (
 	"fmt"
+	"github.com/Sirupsen/logrus"
 	"github.com/crooks/yamn/idlog"
 	"github.com/crooks/yamn/keymgr"
 	"github.com/luksen/maildir"
-	"io"
 	"io/ioutil"
-	"log"
 	"os"
-	"strings"
 )
 
 const (
@@ -25,53 +23,43 @@ const (
 )
 
 var (
-	Trace   *log.Logger
-	Info    *log.Logger
-	Warn    *log.Logger
-	Error   *log.Logger
+	log     = logrus.New()
 	Pubring *keymgr.Pubring
 	IdDb    *idlog.IDLog
 	ChunkDb *Chunk
 )
 
-func logInit(
-	traceHandle io.Writer,
-	infoHandle io.Writer,
-	warnHandle io.Writer,
-	errorHandle io.Writer) {
-
-	Trace = log.New(traceHandle,
-		"Trace: ",
-		log.Ldate|log.Ltime|log.Lshortfile)
-
-	Info = log.New(infoHandle,
-		"Info: ",
-		log.Ldate|log.Ltime|log.Lshortfile)
-
-	Warn = log.New(warnHandle,
-		"Warn: ",
-		log.Ldate|log.Ltime|log.Lshortfile)
-
-	Error = log.New(errorHandle,
-		"Error: ",
-		log.Ldate|log.Ltime|log.Lshortfile)
+func logInit() {
+	level, err := logrus.ParseLevel(cfg.Remailer.Loglevel)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	log.Level = level
+	customFormatter := new(logrus.TextFormatter)
+	customFormatter.FullTimestamp = true
+	customFormatter.TimestampFormat = "2006-01-02 15:04:05"
+	log.Formatter = customFormatter
+	if cfg.Remailer.Logfile == "" {
+		log.Out = os.Stdout
+	} else {
+		logfile, err := os.OpenFile(
+			cfg.Remailer.Logfile,
+			os.O_WRONLY|os.O_CREATE,
+			0640,
+		)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		log.Out = logfile
+	}
 }
 
 func main() {
 	var err error
 	flags()
-	switch strings.ToLower(cfg.Remailer.Loglevel) {
-	case "trace":
-		logInit(os.Stdout, os.Stdout, os.Stdout, os.Stderr)
-	case "info":
-		logInit(ioutil.Discard, os.Stdout, os.Stdout, os.Stderr)
-	case "warn":
-		logInit(ioutil.Discard, ioutil.Discard, os.Stdout, os.Stderr)
-	case "error":
-		logInit(ioutil.Discard, ioutil.Discard, ioutil.Discard, os.Stderr)
-	default:
-		fmt.Fprintf(os.Stderr, "Unknown loglevel: %s\n", cfg.Remailer.Loglevel)
-	}
+	logInit()
 	if flag_client {
 		mixprep()
 	} else if flag_stdin {

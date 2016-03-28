@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/Sirupsen/logrus"
 	"github.com/syndtr/goleveldb/leveldb"
 	"io/ioutil"
 	"os"
@@ -86,7 +87,7 @@ func IsPopulated(items []string) bool {
 func (chunk *Chunk) Housekeep() (ret, del int) {
 	files, err := ioutil.ReadDir(cfg.Files.Pooldir)
 	if err != nil {
-		Warn.Printf("Chunk housekeeping failed: %s", err)
+		log.Warnf("Chunk housekeeping failed: %s", err)
 		return
 	}
 	expire := time.Now().Add(-chunk.deleteDays)
@@ -118,13 +119,13 @@ func (chunk *Chunk) Assemble(filename string, items []string) (err error) {
 		infile := path.Join(cfg.Files.Pooldir, c)
 		content, err = ioutil.ReadFile(infile)
 		if err != nil {
-			Warn.Printf("Chunk assembler says: %s", err)
+			log.Warnf("Chunk assembler says: %s", err)
 			continue
 		}
 		f.Write(content)
 		err = os.Remove(infile)
 		if err != nil {
-			Warn.Printf("Assembler chunk delete failed: %s", err)
+			log.Warnf("Assembler chunk delete failed: %s", err)
 			continue
 		}
 	}
@@ -135,7 +136,9 @@ func (chunk *Chunk) Assemble(filename string, items []string) (err error) {
 func (chunk *Chunk) Delete(messageid []byte) {
 	err := chunk.db.Delete(messageid, nil)
 	if err != nil {
-		Warn.Printf("Could not delete MsgID: %s. %s", messageid, err)
+		log.WithFields(logrus.Fields{
+			"MessageID": messageid,
+		}).Warnf("Could not delete MessageID: %s", err)
 	}
 }
 
@@ -166,7 +169,7 @@ func (chunk *Chunk) Expire() (retained, deleted int) {
 		copy(items, items[1:])
 		expire, err := time.Parse("20060102", stamp)
 		if err != nil {
-			Warn.Printf("Could not parse timestamp: %s", err)
+			log.Warnf("Could not parse timestamp: %s", err)
 			// If the timestamp is invalid, delete the record
 			chunk.DeleteItems(items)
 			chunk.Delete(key)

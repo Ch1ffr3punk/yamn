@@ -72,6 +72,7 @@ type Config struct {
 		Keylife     int
 		Keygrace    int
 		Loglevel    string
+		Logfile     string
 		Daemon      bool
 	}
 }
@@ -207,6 +208,7 @@ func setDefaultConfig() {
 	cfg.Remailer.Keylife = 14
 	cfg.Remailer.Keygrace = 28
 	cfg.Remailer.Loglevel = "info"
+	cfg.Remailer.Logfile = ""
 	cfg.Remailer.Daemon = false
 }
 

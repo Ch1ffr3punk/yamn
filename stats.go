@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	"github.com/Sirupsen/logrus"
 )
 
 type statistics struct {
@@ -28,30 +28,24 @@ func (s *statistics) reset() {
 	s.outLoop = 0
 	s.outRandhop = 0
 	s.outPlain = 0
-	Info.Println("Daily stats reset")
+	log.Info("Daily stats reset")
 }
 
 func (s *statistics) report() {
-	Info.Printf(
-		"MailIn=%d, RemFoo=%d, YamnIn=%d, DummyIn=%d",
-		s.inMail,
-		s.inRemFoo,
-		s.inYamn,
-		s.inDummy,
-	)
-	line1 := fmt.Sprintf(
-		"MailOut=%d, YamnOut=%d, YamnLoop=%d, Randhop=%d, ",
-		s.outMail,
-		s.outYamn,
-		s.outLoop,
-		s.outRandhop,
-	)
-	line2 := fmt.Sprintf(
-		"FinalOut=%d, DummyOut=%d",
-		s.outPlain,
-		s.outDummy,
-	)
-	Info.Printf(line1 + line2)
+	log.WithFields(logrus.Fields{
+		"MailIn":  s.inMail,
+		"RemFoo":  s.inRemFoo,
+		"YamnIn":  s.inYamn,
+		"DummyIn": s.inDummy,
+	}).Info("Inbound stats")
+	log.WithFields(logrus.Fields{
+		"MailOut":  s.outMail,
+		"YamnOut":  s.outYamn,
+		"YamnLoop": s.outLoop,
+		"RandHop":  s.outRandhop,
+		"TextOut":  s.outPlain,
+		"DummyOut": s.outDummy,
+	}).Info("Outbound stats")
 }
 
 var stats = new(statistics)
