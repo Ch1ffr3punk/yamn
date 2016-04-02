@@ -64,6 +64,8 @@ type Config struct {
 	Remailer struct {
 		Name        string
 		Address     string
+		HttpAddr    string
+		HttpPort    int
 		Exit        bool
 		MaxSize     int
 		IDexp       int
@@ -199,6 +201,8 @@ func setDefaultConfig() {
 	cfg.Pool.MaxAge = 28
 	cfg.Remailer.Name = "anon"
 	cfg.Remailer.Address = "mix@nowhere.invalid"
+	cfg.Remailer.HttpAddr = ""
+	cfg.Remailer.HttpPort = 8087
 	cfg.Remailer.Exit = false
 	cfg.Remailer.MaxSize = 12
 	cfg.Remailer.IDexp = 14
