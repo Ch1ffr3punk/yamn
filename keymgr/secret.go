@@ -27,8 +27,7 @@ type Secring struct {
 	pubkeyFile  string // Public keyfile (key.txt)
 	sec         map[string]secret
 	name        string        // Local remailer's name
-	mailto      string        // Local remailer's email address
-	http        string        // Local remailer's http address
+	address     string        // Local remailer's email address
 	myKeyid     []byte        // Keyid this remailer is advertising
 	validity    time.Duration // Period of key validity
 	grace       time.Duration // Period of grace after key expiry
@@ -81,13 +80,12 @@ func (s *Secring) SetName(name string) {
 }
 
 // SetAddress validates and sets the remailer address
-func (s *Secring) SetMailto(addy string) {
+func (s *Secring) SetAddress(addy string) {
 	var err error
 	l := len(addy)
 	if l < 3 || l > maxAddyLen {
 		err = fmt.Errorf(
-			"Remailer mailto address must be 2 to 52 chars, "+
-				"not %d.",
+			"Remailer address must be 2 to 52 chars, not %d.",
 			l,
 		)
 		panic(err)
@@ -95,7 +93,7 @@ func (s *Secring) SetMailto(addy string) {
 	index := strings.Index(addy, "@")
 	if index == -1 {
 		err = fmt.Errorf(
-			"%s: Remailer mailto address doesn't contain an @.",
+			"%s: Remailer address doesn't contain an @.",
 			addy,
 		)
 		panic(err)
@@ -103,27 +101,7 @@ func (s *Secring) SetMailto(addy string) {
 		err = fmt.Errorf("%s: Invalid remailer address.", addy)
 		panic(err)
 	}
-	s.mailto = strings.ToLower(addy)
-}
-
-// SetHttp validates and defines the remailer's http url.
-func (s *Secring) SetHttp(addy string, port int) {
-	l := len(addy)
-	if l > maxAddyLen {
-		err := fmt.Errorf(
-			"Remailer HTTP address exceeds max length: %d",
-			l,
-		)
-		panic(err)
-	}
-	if strings.HasPrefix(addy, "http://") {
-		// HTTP is alright and certainly better than nothing.
-	} else if strings.HasPrefix(addy, "https://") {
-		// We like HTTPS.  Yum yum!
-	} else {
-		panic("Unknown HTTP URL format")
-	}
-	s.http = fmt.Sprintf("%s:%d", addy, port)
+	s.address = strings.ToLower(addy)
 }
 
 // SetExit defines if this is a Middle or Exit remailer
@@ -210,6 +188,7 @@ func (s *Secring) WritePublic(pub []byte, keyidstr string) {
 	}
 
 	header := s.name + " "
+	header += s.address + " "
 	header += keyidstr + " "
 	header += s.version + " "
 	header += capstring + " "
@@ -224,12 +203,6 @@ func (s *Secring) WritePublic(pub []byte, keyidstr string) {
 	defer f.Close()
 	w := bufio.NewWriter(f)
 	fmt.Fprintln(w, header)
-	if s.mailto != "" {
-		fmt.Fprintf(w, "mailto:%s\n", s.mailto)
-	}
-	if s.http != "" {
-		fmt.Fprintln(w, s.http)
-	}
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "-----Begin Mix Key-----")
 	fmt.Fprintln(w, keyidstr)
@@ -272,44 +245,6 @@ func (s *Secring) WriteSecret(keyidstr string) {
 	}
 }
 
-func (s *Secring) headerHelper(elements []string) (keyidstr, outHead string) {
-	var err error
-	// The header format mandates six fields.
-	if len(elements) != 6 {
-		err = fmt.Errorf(
-			"Expected 6 header elements, got %d",
-			len(elements),
-		)
-		panic(err)
-	}
-
-	var capstring string
-	// M = Middle, E = Exit
-	if s.exit {
-		capstring += "E"
-	} else {
-		capstring += "M"
-	}
-
-	// Extract the keyid so we can return it
-	keyidstr = elements[1]
-	if len(keyidstr) != 32 {
-		err = fmt.Errorf(
-			"Invalid public keyid length.  Expected=32, Got=%d.",
-			len(keyidstr),
-		)
-		panic(err)
-	}
-
-	outHead = s.name + " "
-	outHead += keyidstr + " "
-	outHead += s.version + " "
-	outHead += capstring + " "
-	outHead += elements[4] + " " // Valid From date
-	outHead += elements[5]       // Valid To date
-	return
-}
-
 // WriteMyKey writes the local public key to filename with current
 // configurtaion settings.
 func (s *Secring) WriteMyKey(filename string) (keyidstr string) {
@@ -318,67 +253,51 @@ func (s *Secring) WriteMyKey(filename string) (keyidstr string) {
 		panic(err)
 	}
 	defer infile.Close()
-
 	// Create a tmp file rather than overwriting directly
-	out, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0660)
+	outfile, err := os.Create(filename)
 	if err != nil {
 		panic(err)
 	}
-	defer out.Close()
-
-	// Define some variables we'll populate during scanning.
-	var gotHeader bool // True once header processed
-	var header string  // Content of header
-	var gotPubKey bool // True once pubkey processed
-	var pubKey string  // Public key string
-
-	// Prep the scanning loop
+	defer outfile.Close()
 	in := bufio.NewScanner(infile)
-	var line string // Content of each scanned line
-	/*
-		yamntest 3e1c9f713e9058253bcb335d3dd82b8a 4:0.2b E 2016-04-01 2016-04-06
-		mailto:yamntest@mixmin.net
-		http://yamntest.mixmin.net:8087
-
-		-----Begin Mix Key-----
-		3e1c9f713e9058253bcb335d3dd82b8a
-		1b96226bd89d42e9bc338c03bb67154c62959dad4b1e4baed314265f5c6e1a58
-		-----End Mix Key-----
-	*/
+	out := bufio.NewWriter(outfile)
+	var line string
 	for in.Scan() {
 		line = in.Text()
-		// Test for the header line
 		elements := strings.Fields(line)
-		if !gotHeader && len(elements) == 6 {
-			keyidstr, header = s.headerHelper(elements)
-			gotHeader = true
-			continue
+		if len(elements) == 7 {
+			var capstring string
+			// M = Middle, E = Exit
+			if s.exit {
+				capstring += "E"
+			} else {
+				capstring += "M"
+			}
+			// Extract the keyid so we can return it
+			keyidstr = elements[2]
+			if len(keyidstr) != 32 {
+				err = fmt.Errorf(
+					"Invalid public keyid length.  Expected=32, Got=%d.",
+					len(keyidstr),
+				)
+				panic(err)
+			}
+			header := s.name + " "
+			header += s.address + " "
+			header += keyidstr + " "
+			header += s.version + " "
+			header += capstring + " "
+			header += elements[5] + " "
+			header += elements[6]
+			fmt.Fprintln(out, header)
+		} else {
+			fmt.Fprintln(out, line)
 		}
-		if gotHeader && len(elements) == 1 && len(line) == 64 {
-			pubKey = line
-			gotPubKey = true
-			break
-		}
 	}
-	if !gotHeader || !gotPubKey {
-		panic("Malformed Public key file")
+	err = out.Flush()
+	if err != nil {
+		panic(err)
 	}
-
-	// We should now have the header, keyidstr and pubkey.
-	// Write the header line
-	fmt.Fprintln(out, header)
-	// If we have a mail addr, write it under the header.
-	if s.mailto != "" {
-		fmt.Fprintf(out, "mailto:%s\n", s.mailto)
-	}
-	// If we have an http addr, write that next.
-	if s.http != "" {
-		fmt.Fprintln(out, s.http)
-	}
-	fmt.Fprintln(out, "\n-----Begin Mix Key-----")
-	fmt.Fprintln(out, keyidstr)
-	fmt.Fprintln(out, pubKey)
-	fmt.Fprintln(out, "-----End Mix Key-----")
 	return
 }
 

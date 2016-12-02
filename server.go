@@ -34,19 +34,7 @@ func loopServer() (err error) {
 	secret.ImportSecring()
 	// Tell the secret keyring some basic info about this remailer
 	secret.SetName(cfg.Remailer.Name)
-	secret.SetMailto(cfg.Remailer.Address)
-	if cfg.Remailer.HttpAddr == "" {
-		log.Info(
-			"No HTTP address specified. ",
-			"Not configuring transport.",
-		)
-	} else {
-		log.WithFields(logrus.Fields{
-			"Address": cfg.Remailer.HttpAddr,
-			"Port":    cfg.Remailer.HttpPort,
-		}).Info("Defining Remailer HTTP address")
-		secret.SetHttp(cfg.Remailer.HttpAddr, cfg.Remailer.HttpPort)
-	}
+	secret.SetAddress(cfg.Remailer.Address)
 	secret.SetExit(cfg.Remailer.Exit)
 	secret.SetValidity(cfg.Remailer.Keylife, cfg.Remailer.Keygrace)
 	secret.SetVersion(version)

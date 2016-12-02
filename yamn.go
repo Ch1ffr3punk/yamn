@@ -30,9 +30,6 @@ var (
 )
 
 func logInit() {
-	if cfg.Remailer.Loglevel == "trace" {
-		cfg.Remailer.Loglevel = "debug"
-	}
 	level, err := logrus.ParseLevel(cfg.Remailer.Loglevel)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
