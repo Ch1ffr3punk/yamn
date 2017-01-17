@@ -716,7 +716,7 @@ func (m *encMessage) getIntermediateHops() int {
 	return m.intermediateHops
 }
 
-// seqIV constructs a 16 Byte IV from an input of 12 random Bytes and a uint32
+// getIV constructs a 16 Byte IV from an input of 12 random Bytes and a uint32
 // counter.  The format is arbitrary but needs to be predictable and consistent
 // between encrypt and decrypt operations.
 func (m *encMessage) getIV(intermediateHop, slot int) (iv []byte) {
